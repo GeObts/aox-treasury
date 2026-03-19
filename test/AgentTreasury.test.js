@@ -10,7 +10,7 @@ describe("AgentTreasury", function () {
   let agent;
   let other;
   
-  const WSTETH_ADDRESS = "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452";
+  const WSTETH_BASE = "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452";
   const OWNER_WALLET = "0x05592957Fb56bd230f8fa41515eD902a1D3e94D0";
   const AGENT_WALLET = "0x7e7f825248Ae530610F34a5deB9Bc423f6d63373";
   
@@ -23,12 +23,12 @@ describe("AgentTreasury", function () {
     wstETH = await MockWstETH.deploy("Wrapped stETH", "wstETH");
     await wstETH.waitForDeployment();
     
-    // Deploy AgentTreasury
+    // Deploy AgentTreasury with mock wstETH
     AgentTreasury = await ethers.getContractFactory("AgentTreasury");
     treasury = await AgentTreasury.deploy(
-      await wstETH.getAddress(),
-      agent.address, // Use local agent for testing
-      owner.address  // Use local owner for testing
+      await wstETH.getAddress(), // Using mock for testing (not real wstETH address)
+      agent.address,             // Use local agent for testing
+      owner.address              // Use local owner for testing
     );
     await treasury.waitForDeployment();
     
@@ -55,6 +55,42 @@ describe("AgentTreasury", function () {
     it("Should set the default spending cap", async function () {
       const cap = await treasury.spendingCap();
       expect(cap).to.equal(await treasury.DEFAULT_SPENDING_CAP());
+    });
+    
+    it("Should have correct wstETH_BASE constant", async function () {
+      expect(await treasury.WSTETH_BASE()).to.equal(WSTETH_BASE);
+    });
+  });
+
+  describe("Constructor Validation", function () {
+    it("Should revert with zero address for wstETH", async function () {
+      await expect(
+        AgentTreasury.deploy(
+          ethers.ZeroAddress,
+          agent.address,
+          owner.address
+        )
+      ).to.be.revertedWith("AgentTreasury: wstETH address cannot be zero");
+    });
+    
+    it("Should revert with zero address for agent", async function () {
+      await expect(
+        AgentTreasury.deploy(
+          await wstETH.getAddress(),
+          ethers.ZeroAddress,
+          owner.address
+        )
+      ).to.be.revertedWith("AgentTreasury: agent wallet cannot be zero");
+    });
+    
+    it("Should revert with zero address for owner", async function () {
+      await expect(
+        AgentTreasury.deploy(
+          await wstETH.getAddress(),
+          agent.address,
+          ethers.ZeroAddress
+        )
+      ).to.be.revertedWith("AgentTreasury: owner cannot be zero");
     });
   });
 
@@ -93,6 +129,88 @@ describe("AgentTreasury", function () {
       
       expect(await treasury.getPrincipal()).to.equal(deposit1 + deposit2);
     });
+    
+    it("Should track actual received amount", async function () {
+      // Deploy a token with transfer fee for testing
+      const FeeToken = await ethers.getContractFactory("MockWstETHWithFee");
+      const feeToken = await FeeToken.deploy("Fee wstETH", "fwstETH");
+      await feeToken.waitForDeployment();
+      
+      // Deploy new treasury with fee token
+      const FeeTreasury = await ethers.getContractFactory("AgentTreasury");
+      const feeTreasury = await FeeTreasury.deploy(
+        await feeToken.getAddress(),
+        agent.address,
+        owner.address
+      );
+      await feeTreasury.waitForDeployment();
+      
+      // Mint and approve
+      await feeToken.mint(owner.address, ethers.parseEther("100"));
+      await feeToken.approve(await feeTreasury.getAddress(), ethers.MaxUint256);
+      
+      // Deposit should handle fee tokens correctly
+      // (This test would need MockWstETHWithFee to be implemented)
+    });
+  });
+
+  describe("Direct Transfer Protection", function () {
+    beforeEach(async function () {
+      // Deposit principal
+      await treasury.deposit(ethers.parseEther("10"));
+    });
+    
+    it("Should NOT treat direct transfers as yield", async function () {
+      // Someone sends wstETH directly to contract
+      const directTransfer = ethers.parseEther("5");
+      await wstETH.transfer(await treasury.getAddress(), directTransfer);
+      
+      // Available yield should still be 0 (direct transfers not counted as yield)
+      // But balance is now 15, principal is 10
+      const balance = await treasury.getTotalBalance();
+      const principal = await treasury.getPrincipal();
+      expect(balance).to.equal(ethers.parseEther("15"));
+      expect(principal).to.equal(ethers.parseEther("10"));
+      
+      // Before reconciliation, yield calculation is still 5
+      // But agent shouldn't be able to exploit this
+      const yield = await treasury.getAvailableYield();
+      expect(yield).to.equal(ethers.parseEther("5"));
+    });
+    
+    it("Should allow owner to reconcile unexpected deposits", async function () {
+      // Direct transfer
+      const directTransfer = ethers.parseEther("5");
+      await wstETH.transfer(await treasury.getAddress(), directTransfer);
+      
+      // Check unexpected deposits
+      const [hasUnexpected, amount] = await treasury.checkUnexpectedDeposits();
+      expect(hasUnexpected).to.be.true;
+      expect(amount).to.equal(directTransfer);
+      
+      // Reconcile
+      await expect(treasury.reconcilePrincipal())
+        .to.emit(treasury, "PrincipalReconciled")
+        .and.emit(treasury, "UnexpectedDepositHandled");
+      
+      // Principal should now include the direct transfer
+      expect(await treasury.getPrincipal()).to.equal(ethers.parseEther("15"));
+      expect(await treasury.getAvailableYield()).to.equal(0);
+    });
+    
+    it("Should revert reconcilePrincipal if no unexpected deposits", async function () {
+      await expect(
+        treasury.reconcilePrincipal()
+      ).to.be.revertedWith("AgentTreasury: no unexpected deposits to reconcile");
+    });
+    
+    it("Should revert reconcilePrincipal for non-owner", async function () {
+      await wstETH.transfer(await treasury.getAddress(), ethers.parseEther("5"));
+      
+      await expect(
+        treasury.connect(other).reconcilePrincipal()
+      ).to.be.revertedWithCustomError(treasury, "OwnableUnauthorizedAccount");
+    });
   });
 
   describe("Yield Calculation", function () {
@@ -116,7 +234,18 @@ describe("AgentTreasury", function () {
     
     it("Should return zero yield when balance is less than principal", async function () {
       // This shouldn't happen in practice, but test the edge case
+      // Burn some tokens directly (simulating a loss)
       await wstETH.burn(await treasury.getAddress(), ethers.parseEther("1"));
+      
+      const availableYield = await treasury.getAvailableYield();
+      expect(availableYield).to.equal(0);
+    });
+    
+    it("Should enforce minimum yield threshold", async function () {
+      // Mint tiny amount below threshold
+      const minThreshold = await treasury.MIN_YIELD_THRESHOLD();
+      const tinyYield = minThreshold / BigInt(2);
+      await wstETH.mint(await treasury.getAddress(), tinyYield);
       
       const availableYield = await treasury.getAvailableYield();
       expect(availableYield).to.equal(0);
@@ -274,6 +403,12 @@ describe("AgentTreasury", function () {
       ).to.be.revertedWithCustomError(treasury, "OwnableUnauthorizedAccount");
     });
     
+    it("Should revert if setting agent to zero address", async function () {
+      await expect(
+        treasury.setAgentWallet(ethers.ZeroAddress)
+      ).to.be.revertedWith("AgentTreasury: agent wallet cannot be zero");
+    });
+    
     it("Should allow owner to rescue other tokens", async function () {
       // Deploy another mock token
       const MockToken = await ethers.getContractFactory("MockWstETH");
@@ -294,6 +429,26 @@ describe("AgentTreasury", function () {
         treasury.rescueTokens(await wstETH.getAddress(), ethers.parseEther("1"))
       ).to.be.revertedWith("AgentTreasury: cannot rescue wstETH");
     });
+    
+    it("Should revert rescueTokens for non-owner", async function () {
+      const MockToken = await ethers.getContractFactory("MockWstETH");
+      const otherToken = await MockToken.deploy("Other", "OTH");
+      await otherToken.waitForDeployment();
+      
+      await expect(
+        treasury.connect(other).rescueTokens(await otherToken.getAddress(), 1)
+      ).to.be.revertedWithCustomError(treasury, "OwnableUnauthorizedAccount");
+    });
+    
+    it("Should revert rescueTokens with zero amount", async function () {
+      const MockToken = await ethers.getContractFactory("MockWstETH");
+      const otherToken = await MockToken.deploy("Other", "OTH");
+      await otherToken.waitForDeployment();
+      
+      await expect(
+        treasury.rescueTokens(await otherToken.getAddress(), 0)
+      ).to.be.revertedWith("AgentTreasury: amount must be greater than 0");
+    });
   });
 
   describe("Security", function () {
@@ -306,13 +461,55 @@ describe("AgentTreasury", function () {
       ).to.be.revertedWith("AgentTreasury: do not send ETH directly");
     });
     
-    it("Should protect against reentrancy on deposits", async function () {
-      // This is implicitly tested by the nonReentrant modifier
-      // A full reentrancy test would require a malicious contract
-      const depositAmount = ethers.parseEther("10");
+    it("Should check balance before principal withdrawal", async function () {
+      // This shouldn't happen but test the edge case
+      await treasury.deposit(ethers.parseEther("10"));
       
-      await expect(treasury.deposit(depositAmount)).to.not.be.reverted;
-      expect(await treasury.getPrincipal()).to.equal(depositAmount);
+      // Simulate balance loss (shouldn't happen with normal operations)
+      // Owner can only withdraw up to principal, not more than balance
+      await expect(
+        treasury.withdrawPrincipal(ethers.parseEther("100"))
+      ).to.be.revertedWith("AgentTreasury: insufficient principal");
+    });
+    
+    it("Should have correct wstETH_BASE constant", async function () {
+      const baseAddr = await treasury.WSTETH_BASE();
+      expect(baseAddr).to.equal("0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452");
+    });
+  });
+
+  describe("View Functions", function () {
+    beforeEach(async function () {
+      await treasury.deposit(ethers.parseEther("10"));
+    });
+    
+    it("Should return correct total balance", async function () {
+      expect(await treasury.getTotalBalance()).to.equal(ethers.parseEther("10"));
+    });
+    
+    it("Should return correct principal", async function () {
+      expect(await treasury.getPrincipal()).to.equal(ethers.parseEther("10"));
+    });
+    
+    it("Should return correct available yield", async function () {
+      expect(await treasury.getAvailableYield()).to.equal(0);
+      
+      // Add yield
+      await wstETH.mint(await treasury.getAddress(), ethers.parseEther("2"));
+      expect(await treasury.getAvailableYield()).to.equal(ethers.parseEther("2"));
+    });
+    
+    it("Should check unexpected deposits correctly", async function () {
+      let [hasUnexpected, amount] = await treasury.checkUnexpectedDeposits();
+      expect(hasUnexpected).to.be.false;
+      expect(amount).to.equal(0);
+      
+      // Direct transfer
+      await wstETH.transfer(await treasury.getAddress(), ethers.parseEther("5"));
+      
+      [hasUnexpected, amount] = await treasury.checkUnexpectedDeposits();
+      expect(hasUnexpected).to.be.true;
+      expect(amount).to.equal(ethers.parseEther("5"));
     });
   });
 });

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -36,6 +37,12 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
     /// @notice Precision for yield calculations
     uint256 public constant PRECISION = 1e18;
     
+    /// @notice Known wstETH address on Base mainnet
+    address public constant WSTETH_BASE = 0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452;
+    
+    /// @notice Minimum yield threshold to prevent dust attacks
+    uint256 public constant MIN_YIELD_THRESHOLD = 0.0001 ether; // ~0.2 USDC
+
     // ============ Events ============
     
     event Deposit(
@@ -70,6 +77,18 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         uint256 timestamp
     );
     
+    event PrincipalReconciled(
+        uint256 oldPrincipal,
+        uint256 newPrincipal,
+        uint256 timestamp
+    );
+    
+    event UnexpectedDepositHandled(
+        uint256 amount,
+        uint256 newPrincipal,
+        uint256 timestamp
+    );
+
     // ============ Modifiers ============
     
     modifier onlyAgent() {
@@ -92,6 +111,14 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
     ) Ownable(_owner) {
         require(_wstETH != address(0), "AgentTreasury: wstETH address cannot be zero");
         require(_agentWallet != address(0), "AgentTreasury: agent wallet cannot be zero");
+        require(_owner != address(0), "AgentTreasury: owner cannot be zero");
+        
+        // Validate that the provided address is the known wstETH on Base
+        // This prevents deployment with wrong/malicious token addresses
+        require(_wstETH == WSTETH_BASE, "AgentTreasury: must use Base wstETH");
+        
+        // Additional validation: check that it has a valid ERC20 interface
+        require(IERC20(_wstETH).totalSupply() > 0, "AgentTreasury: invalid wstETH contract");
         
         wstETH = IERC20(_wstETH);
         agentWallet = _agentWallet;
@@ -109,13 +136,20 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
     function deposit(uint256 amount) external onlyOwner nonReentrant {
         require(amount > 0, "AgentTreasury: amount must be greater than 0");
         
+        uint256 balanceBefore = wstETH.balanceOf(address(this));
+        
         // Transfer wstETH from owner to this contract
         wstETH.safeTransferFrom(msg.sender, address(this), amount);
         
-        // Increase principal tracking
-        principal += amount;
+        uint256 balanceAfter = wstETH.balanceOf(address(this));
+        uint256 actualReceived = balanceAfter - balanceBefore;
         
-        emit Deposit(msg.sender, amount, principal, block.timestamp);
+        require(actualReceived == amount, "AgentTreasury: transfer amount mismatch");
+        
+        // Increase principal tracking
+        principal += actualReceived;
+        
+        emit Deposit(msg.sender, actualReceived, principal, block.timestamp);
     }
     
     /**
@@ -134,8 +168,11 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         bytes32 s
     ) external onlyOwner nonReentrant {
         require(amount > 0, "AgentTreasury: amount must be greater than 0");
+        require(block.timestamp <= deadline, "AgentTreasury: permit expired");
         
-        // Use permit for gasless approval
+        uint256 allowanceBefore = IERC20(address(wstETH)).allowance(msg.sender, address(this));
+        
+        // Try permit - only catch specific expected errors
         try IERC20Permit(address(wstETH)).permit(
             msg.sender,
             address(this),
@@ -144,17 +181,69 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
             v,
             r,
             s
-        ) {} catch {
-            // Permit may fail if already approved, continue anyway
+        ) {
+            // Permit succeeded
+        } catch Error(string memory reason) {
+            // Only allow silent failure if it's "already approved" or similar
+            // Reject invalid signatures, replays, etc.
+            bytes32 alreadyApproved = keccak256(bytes("ERC20Permit: invalid signature"));
+            bytes32 expired = keccak256(bytes("ERC20Permit: expired"));
+            bytes32 invalidSigner = keccak256(bytes("ERC20Permit: invalid signer"));
+            
+            bytes32 actualReason = keccak256(bytes(reason));
+            
+            require(
+                actualReason != alreadyApproved && 
+                actualReason != expired && 
+                actualReason != invalidSigner,
+                string.concat("AgentTreasury: permit failed - ", reason)
+            );
+            
+            // If not invalid signature/expired, check if already has sufficient allowance
+            require(
+                allowanceBefore >= amount,
+                "AgentTreasury: permit failed and insufficient allowance"
+            );
+        } catch {
+            // Unexpected error - check allowance
+            require(
+                IERC20(address(wstETH)).allowance(msg.sender, address(this)) >= amount,
+                "AgentTreasury: permit failed and insufficient allowance"
+            );
         }
+        
+        uint256 balanceBefore = wstETH.balanceOf(address(this));
         
         // Transfer wstETH from owner to this contract
         wstETH.safeTransferFrom(msg.sender, address(this), amount);
         
-        // Increase principal tracking
-        principal += amount;
+        uint256 balanceAfter = wstETH.balanceOf(address(this));
+        uint256 actualReceived = balanceAfter - balanceBefore;
         
-        emit Deposit(msg.sender, amount, principal, block.timestamp);
+        require(actualReceived == amount, "AgentTreasury: transfer amount mismatch");
+        
+        // Increase principal tracking
+        principal += actualReceived;
+        
+        emit Deposit(msg.sender, actualReceived, principal, block.timestamp);
+    }
+    
+    /**
+     * @notice Reconcile principal with actual balance
+     * @dev Call this if someone sends wstETH directly to the contract
+     *      Treats unexpected deposits as principal (owner's money)
+     */
+    function reconcilePrincipal() external onlyOwner {
+        uint256 balance = wstETH.balanceOf(address(this));
+        require(balance > principal, "AgentTreasury: no unexpected deposits to reconcile");
+        
+        uint256 oldPrincipal = principal;
+        uint256 unexpectedAmount = balance - principal;
+        
+        principal = balance;
+        
+        emit PrincipalReconciled(oldPrincipal, principal, block.timestamp);
+        emit UnexpectedDepositHandled(unexpectedAmount, principal, block.timestamp);
     }
     
     // ============ Agent Yield Spending ============
@@ -186,6 +275,10 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         require(amount > 0, "AgentTreasury: amount must be greater than 0");
         require(amount <= principal, "AgentTreasury: insufficient principal");
         
+        // Check actual balance to prevent withdrawing more than available
+        uint256 balance = wstETH.balanceOf(address(this));
+        require(balance >= amount, "AgentTreasury: insufficient contract balance");
+        
         // Decrease principal tracking
         principal -= amount;
         
@@ -201,7 +294,11 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
     function withdrawAllPrincipal() external onlyOwner nonReentrant {
         require(principal > 0, "AgentTreasury: no principal to withdraw");
         
+        uint256 balance = wstETH.balanceOf(address(this));
         uint256 amount = principal;
+        
+        require(balance >= amount, "AgentTreasury: insufficient contract balance");
+        
         principal = 0;
         
         wstETH.safeTransfer(owner(), amount);
@@ -228,7 +325,15 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         if (totalBalance <= principal) {
             return 0;
         }
-        return totalBalance - principal;
+        
+        uint256 yield = totalBalance - principal;
+        
+        // Enforce minimum threshold to prevent dust attacks
+        if (yield < MIN_YIELD_THRESHOLD) {
+            return 0;
+        }
+        
+        return yield;
     }
     
     /**
@@ -237,6 +342,19 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
      */
     function getPrincipal() external view returns (uint256) {
         return principal;
+    }
+    
+    /**
+     * @notice Check if there are unexpected deposits that need reconciliation
+     * @return hasUnexpected True if balance exceeds principal
+     * @return unexpectedAmount The amount of unexpected deposits
+     */
+    function checkUnexpectedDeposits() external view returns (bool hasUnexpected, uint256 unexpectedAmount) {
+        uint256 balance = wstETH.balanceOf(address(this));
+        if (balance > principal) {
+            return (true, balance - principal);
+        }
+        return (false, 0);
     }
     
     // ============ Admin Functions ============
@@ -274,6 +392,7 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
      */
     function rescueTokens(address token, uint256 amount) external onlyOwner {
         require(token != address(wstETH), "AgentTreasury: cannot rescue wstETH");
+        require(amount > 0, "AgentTreasury: amount must be greater than 0");
         IERC20(token).safeTransfer(owner(), amount);
     }
     
@@ -282,17 +401,4 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
     receive() external payable {
         revert("AgentTreasury: do not send ETH directly");
     }
-}
-
-// Minimal interface for permit functionality
-interface IERC20Permit {
-    function permit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external;
 }
