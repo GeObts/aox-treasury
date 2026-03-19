@@ -60,6 +60,31 @@ describe("AgentTreasury", function () {
     it("Should have correct wstETH_BASE constant", async function () {
       expect(await treasury.WSTETH_BASE()).to.equal(WSTETH_BASE);
     });
+    
+    it("Should have correct MIN_SPENDING_CAP constant", async function () {
+      expect(await treasury.MIN_SPENDING_CAP()).to.equal(ethers.parseEther("0.001"));
+    });
+    
+    it("Should emit TreasuryDeployed event", async function () {
+      // Deploy new instance to check event
+      const tx = await AgentTreasury.deploy(
+        await wstETH.getAddress(),
+        agent.address,
+        owner.address
+      );
+      const receipt = await tx.deploymentTransaction().wait();
+      
+      // Check that TreasuryDeployed event was emitted
+      const event = receipt.logs.find(log => {
+        try {
+          const parsed = treasury.interface.parseLog(log);
+          return parsed && parsed.name === "TreasuryDeployed";
+        } catch {
+          return false;
+        }
+      });
+      expect(event).to.not.be.undefined;
+    });
   });
 
   describe("Constructor Validation", function () {
@@ -129,29 +154,6 @@ describe("AgentTreasury", function () {
       
       expect(await treasury.getPrincipal()).to.equal(deposit1 + deposit2);
     });
-    
-    it("Should track actual received amount", async function () {
-      // Deploy a token with transfer fee for testing
-      const FeeToken = await ethers.getContractFactory("MockWstETHWithFee");
-      const feeToken = await FeeToken.deploy("Fee wstETH", "fwstETH");
-      await feeToken.waitForDeployment();
-      
-      // Deploy new treasury with fee token
-      const FeeTreasury = await ethers.getContractFactory("AgentTreasury");
-      const feeTreasury = await FeeTreasury.deploy(
-        await feeToken.getAddress(),
-        agent.address,
-        owner.address
-      );
-      await feeTreasury.waitForDeployment();
-      
-      // Mint and approve
-      await feeToken.mint(owner.address, ethers.parseEther("100"));
-      await feeToken.approve(await feeTreasury.getAddress(), ethers.MaxUint256);
-      
-      // Deposit should handle fee tokens correctly
-      // (This test would need MockWstETHWithFee to be implemented)
-    });
   });
 
   describe("Direct Transfer Protection", function () {
@@ -165,15 +167,13 @@ describe("AgentTreasury", function () {
       const directTransfer = ethers.parseEther("5");
       await wstETH.transfer(await treasury.getAddress(), directTransfer);
       
-      // Available yield should still be 0 (direct transfers not counted as yield)
-      // But balance is now 15, principal is 10
+      // Balance is now 15, principal is 10
       const balance = await treasury.getTotalBalance();
       const principal = await treasury.getPrincipal();
       expect(balance).to.equal(ethers.parseEther("15"));
       expect(principal).to.equal(ethers.parseEther("10"));
       
       // Before reconciliation, yield calculation is still 5
-      // But agent shouldn't be able to exploit this
       const yield = await treasury.getAvailableYield();
       expect(yield).to.equal(ethers.parseEther("5"));
     });
@@ -234,7 +234,6 @@ describe("AgentTreasury", function () {
     
     it("Should return zero yield when balance is less than principal", async function () {
       // This shouldn't happen in practice, but test the edge case
-      // Burn some tokens directly (simulating a loss)
       await wstETH.burn(await treasury.getAddress(), ethers.parseEther("1"));
       
       const availableYield = await treasury.getAvailableYield();
@@ -368,12 +367,22 @@ describe("AgentTreasury", function () {
 
   describe("Admin Functions", function () {
     it("Should allow owner to update spending cap", async function () {
-      const newCap = ethers.parseEther("1");
+      const minCap = await treasury.MIN_SPENDING_CAP();
+      const newCap = ethers.parseEther("0.01"); // Above minimum
       
       await expect(treasury.setSpendingCap(newCap))
         .to.emit(treasury, "SpendingCapUpdated");
       
       expect(await treasury.spendingCap()).to.equal(newCap);
+    });
+    
+    it("Should revert if spending cap is below minimum", async function () {
+      const minCap = await treasury.MIN_SPENDING_CAP();
+      const tooLowCap = minCap - BigInt(1);
+      
+      await expect(
+        treasury.setSpendingCap(tooLowCap)
+      ).to.be.revertedWith("AgentTreasury: cap below minimum");
     });
     
     it("Should revert if non-owner tries to update spending cap", async function () {
@@ -385,7 +394,7 @@ describe("AgentTreasury", function () {
     it("Should revert if spending cap is zero", async function () {
       await expect(
         treasury.setSpendingCap(0)
-      ).to.be.revertedWith("AgentTreasury: cap must be greater than 0");
+      ).to.be.revertedWith("AgentTreasury: cap below minimum");
     });
     
     it("Should allow owner to update agent wallet", async function () {
@@ -409,7 +418,19 @@ describe("AgentTreasury", function () {
       ).to.be.revertedWith("AgentTreasury: agent wallet cannot be zero");
     });
     
-    it("Should allow owner to rescue other tokens", async function () {
+    it("Should revert if setting agent to contract itself", async function () {
+      await expect(
+        treasury.setAgentWallet(await treasury.getAddress())
+      ).to.be.revertedWith("AgentTreasury: cannot be self");
+    });
+    
+    it("Should revert if setting agent to owner", async function () {
+      await expect(
+        treasury.setAgentWallet(owner.address)
+      ).to.be.revertedWith("AgentTreasury: cannot be owner");
+    });
+    
+    it("Should allow owner to rescue other tokens with event", async function () {
       // Deploy another mock token
       const MockToken = await ethers.getContractFactory("MockWstETH");
       const otherToken = await MockToken.deploy("Other Token", "OTHER");
@@ -419,7 +440,9 @@ describe("AgentTreasury", function () {
       await otherToken.mint(await treasury.getAddress(), ethers.parseEther("100"));
       
       // Rescue tokens
-      await treasury.rescueTokens(await otherToken.getAddress(), ethers.parseEther("50"));
+      await expect(treasury.rescueTokens(await otherToken.getAddress(), ethers.parseEther("50")))
+        .to.emit(treasury, "TokensRescued")
+        .withArgs(await otherToken.getAddress(), ethers.parseEther("50"), await time.latest());
       
       expect(await otherToken.balanceOf(owner.address)).to.equal(ethers.parseEther("50"));
     });
@@ -465,8 +488,6 @@ describe("AgentTreasury", function () {
       // This shouldn't happen but test the edge case
       await treasury.deposit(ethers.parseEther("10"));
       
-      // Simulate balance loss (shouldn't happen with normal operations)
-      // Owner can only withdraw up to principal, not more than balance
       await expect(
         treasury.withdrawPrincipal(ethers.parseEther("100"))
       ).to.be.revertedWith("AgentTreasury: insufficient principal");

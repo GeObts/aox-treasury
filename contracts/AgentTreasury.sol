@@ -28,22 +28,30 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
     /// @notice The principal amount deposited by owner (in wstETH)
     uint256 public principal;
     
-    /// @notice The spending cap per transaction (in wstETH, roughly equivalent to 10 USDC)
+    /// @notice The spending cap per transaction (in wstETH)
     uint256 public spendingCap;
     
-    /// @notice Default spending cap: ~10 USDC worth (using 0.005 wstETH as proxy)
+    /// @notice Default spending cap: 0.005 wstETH (~$10-20 USDC at current prices, March 2026)
     uint256 public constant DEFAULT_SPENDING_CAP = 0.005 ether;
     
-    /// @notice Precision for yield calculations
-    uint256 public constant PRECISION = 1e18;
-    
-    /// @notice Known wstETH address on Base mainnet
-    address public constant WSTETH_BASE = 0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452;
+    /// @notice Minimum spending cap to prevent owner from locking agent out
+    uint256 public constant MIN_SPENDING_CAP = 0.001 ether; // 0.001 wstETH minimum
     
     /// @notice Minimum yield threshold to prevent dust attacks
     uint256 public constant MIN_YIELD_THRESHOLD = 0.0001 ether; // ~0.2 USDC
+    
+    /// @notice Known wstETH address on Base mainnet
+    address public constant WSTETH_BASE = 0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452;
 
     // ============ Events ============
+    
+    event TreasuryDeployed(
+        address indexed wstETH,
+        address indexed owner,
+        address indexed agent,
+        uint256 spendingCap,
+        uint256 timestamp
+    );
     
     event Deposit(
         address indexed depositor,
@@ -88,6 +96,12 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         uint256 newPrincipal,
         uint256 timestamp
     );
+    
+    event TokensRescued(
+        address indexed token,
+        uint256 amount,
+        uint256 timestamp
+    );
 
     // ============ Modifiers ============
     
@@ -114,7 +128,6 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         require(_owner != address(0), "AgentTreasury: owner cannot be zero");
         
         // Validate that the provided address is the known wstETH on Base
-        // This prevents deployment with wrong/malicious token addresses
         require(_wstETH == WSTETH_BASE, "AgentTreasury: must use Base wstETH");
         
         // Additional validation: check that it has a valid ERC20 interface
@@ -124,6 +137,7 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         agentWallet = _agentWallet;
         spendingCap = DEFAULT_SPENDING_CAP;
         
+        emit TreasuryDeployed(_wstETH, _owner, _agentWallet, DEFAULT_SPENDING_CAP, block.timestamp);
         emit AgentWalletUpdated(address(0), _agentWallet, block.timestamp);
     }
     
@@ -364,7 +378,7 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
      * @param newCap The new spending cap
      */
     function setSpendingCap(uint256 newCap) external onlyOwner {
-        require(newCap > 0, "AgentTreasury: cap must be greater than 0");
+        require(newCap >= MIN_SPENDING_CAP, "AgentTreasury: cap below minimum");
         
         uint256 oldCap = spendingCap;
         spendingCap = newCap;
@@ -378,6 +392,8 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
      */
     function setAgentWallet(address newAgentWallet) external onlyOwner {
         require(newAgentWallet != address(0), "AgentTreasury: agent wallet cannot be zero");
+        require(newAgentWallet != address(this), "AgentTreasury: cannot be self");
+        require(newAgentWallet != owner(), "AgentTreasury: cannot be owner");
         
         address oldAgent = agentWallet;
         agentWallet = newAgentWallet;
@@ -394,6 +410,8 @@ contract AgentTreasury is Ownable, ReentrancyGuard {
         require(token != address(wstETH), "AgentTreasury: cannot rescue wstETH");
         require(amount > 0, "AgentTreasury: amount must be greater than 0");
         IERC20(token).safeTransfer(owner(), amount);
+        
+        emit TokensRescued(token, amount, block.timestamp);
     }
     
     // ============ Receive Function ============
