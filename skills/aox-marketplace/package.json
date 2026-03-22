@@ -1,0 +1,16 @@
+{
+  "name": "aox-x402-marketplace",
+  "version": "2.0.0",
+  "description": "AOX x402 payment server — serves leads and handles crypto payments on Base",
+  "main": "x402-server.js",
+  "scripts": {
+    "start": "node x402-server.js",
+    "dev": "node x402-server.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
