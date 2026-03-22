@@ -1,0 +1,38 @@
+{
+  "id": "token-0xabc123",
+  "category": "Token Launch",
+  "title": "ABC Token — $340K FDV, 89 Unique Traders",
+  "desc": "Active token on Base with strong liquidity ($210K reserve). 312 transactions over 14 days.",
+  "score": 87,
+  "price": 45,
+  "tier": "premium",
+  "payment_token": "USDC",
+  "status": "available",
+  "metadata": {
+    "chain": "Base",
+    "fdv_usd": 340000,
+    "volume_24h": 15600,
+    "transactions": 312,
+    "unique_traders": 89,
+    "liquidity_reserve": 210000,
+    "dex": "Uniswap V3",
+    "token_address": "0xabc123...",
+    "deployer_wallet": "0xdef456...",
+    "deployer_age_days": 187
+  },
+  "source_url": "https://geckoterminal.com/...",
+  "source_verified": true,
+  "contact_data": {
+    "name": "ABC Token — Full Details",
+    "fields": [
+      { "label": "Token Contract", "value": "0xabc123..." },
+      { "label": "Deployer Wallet", "value": "0xdef456..." },
+      { "label": "Deployer Age", "value": "187 days" },
+      { "label": "Chain", "value": "Base" },
+      { "label": "DEX", "value": "Uniswap V3" },
+      { "label": "FDV", "value": "$340,000" },
+      { "label": "Liquidity", "value": "$210,000" },
+      { "label": "Data Source", "value": "GeckoTerminal API (verified)" }
+    ]
+  }
+}
