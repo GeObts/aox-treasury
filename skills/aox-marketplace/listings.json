@@ -81,7 +81,7 @@
       "tier": "enterprise",
       "price": 100,
       "payment_token": "USDC",
-      "payment_address": "0x2Fc8F99B6b503DD7BC4e0a31d7E81DfA04e521fB",
+      "payment_address": "0x729174D90CA93139E3E9590993910B784eD32282",
       "listed_at": "2026-03-21T23:58:00Z",
       "expires_at": "2026-03-28T23:58:00Z",
       "public_metadata": {

@@ -33,7 +33,7 @@ Run through these in order. Log the result of each step.
 
 **SPAWN Marketplace Agent** with task:
 
-> "You are the Marketplace Agent. Check your wallet 0x2Fc8F99B6b503DD7BC4e0a31d7E81DfA04e521fB on Base mainnet. Do the following:
+> "You are the Marketplace Agent. Check your wallet 0x729174D90CA93139E3E9590993910B784eD32282 on Base mainnet. Do the following:
 > 1) Get your ETH balance.
 > 2) Get ALL token balances in your wallet — every single token regardless of what it is.
 > 3) Transfer 100% of every token to the Banker wallet at 0x6350B793688221c75cfB438547B9CA47f5b0D4f1

@@ -16,7 +16,7 @@ const { ethers } = require('ethers');
 // ---------------------------------------------------------------------------
 const PORT = process.env.PORT || 3200;
 const BASE_RPC = process.env.BASE_RPC || 'https://mainnet.base.org';
-const MARKETPLACE_WALLET = '0x2Fc8F99B6b503DD7BC4e0a31d7E81DfA04e521fB';
+const MARKETPLACE_WALLET = '0x729174D90CA93139E3E9590993910B784eD32282';
 const BANKER_WALLET = '0x7e7f825248Ae530610F34a5deB9Bc423f6d63373';
 
 // Accepted payment tokens on Base mainnet
