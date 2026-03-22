@@ -1,0 +1,55 @@
+{
+  "poly-0xc2e7800b5a": {
+    "name": "Top Polymarket Trader — 4M Volume",
+    "fields": [
+      { "label": "Wallet Address", "value": "0xc2e7800b5af46e6093872b177b7a5e7f0563be51" },
+      { "label": "Polymarket Profile", "value": "https://polymarket.com/profile/0xc2e7800b5af46e6093872b177b7a5e7f0563be51" },
+      { "label": "Total Volume", "value": "$64,242,887.69" },
+      { "label": "Total Trades", "value": "500" },
+      { "label": "Unique Markets", "value": "56" },
+      { "label": "Win Rate", "value": "72%" },
+      { "label": "Chain", "value": "Polygon" },
+      { "label": "Data Source", "value": "Polymarket Data API (verified)" }
+    ]
+  },
+  "poly-0x63d43bbb": {
+    "name": "Active Polymarket Trader — 137 Markets",
+    "fields": [
+      { "label": "Wallet Address", "value": "0x63d43bbb87f85af03b8f2f9e2fad7b54334fa2f1" },
+      { "label": "Polymarket Profile", "value": "https://polymarket.com/profile/0x63d43bbb87f85af03b8f2f9e2fad7b54334fa2f1" },
+      { "label": "Total Volume", "value": "$21,266.34" },
+      { "label": "Total Trades", "value": "500 (all buys)" },
+      { "label": "Unique Markets", "value": "137" },
+      { "label": "Top Categories", "value": "Politics, Sports, Tech" },
+      { "label": "Source URL", "value": "https://data-api.polymarket.com/trades?user=0x63d43bbb87f85af03b8f2f9e2fad7b54334fa2f1" },
+      { "label": "Data Source", "value": "Polymarket Data API (verified)" }
+    ]
+  },
+  "poly-0x5eeb2911b": {
+    "name": "Polymarket Trader — Guajjangi",
+    "fields": [
+      { "label": "Wallet Address", "value": "0x5eeb2911bf927d7ded5fccf150293105ef7e01b2" },
+      { "label": "Polymarket Profile", "value": "https://polymarket.com/profile/0x5eeb2911bf927d7ded5fccf150293105ef7e01b2" },
+      { "label": "Profile Name", "value": "Naive-Conflict" },
+      { "label": "Total Volume", "value": "$1,281.62" },
+      { "label": "Total Trades", "value": "500 (all buys)" },
+      { "label": "Unique Markets", "value": "16" },
+      { "label": "Source URL", "value": "https://data-api.polymarket.com/trades?user=0x5eeb2911bf927d7ded5fccf150293105ef7e01b2" },
+      { "label": "Data Source", "value": "Polymarket Data API (verified)" }
+    ]
+  },
+  "token-0x0f7cc3232c": {
+    "name": "SENT — Active DeFi Token",
+    "fields": [
+      { "label": "Token Address", "value": "0x0f7cc3232cd7baf5c7ee55ee8c24789d80f67b5d" },
+      { "label": "Chain", "value": "Base" },
+      { "label": "DEX", "value": "Uniswap V2" },
+      { "label": "FDV", "value": "$80,712" },
+      { "label": "24h Volume", "value": "$2,630" },
+      { "label": "Transactions", "value": "84" },
+      { "label": "Unique Buyers", "value": "12" },
+      { "label": "Liquidity Reserve", "value": "$155,631" },
+      { "label": "Data Source", "value": "GeckoTerminal API (verified)" }
+    ]
+  }
+}
